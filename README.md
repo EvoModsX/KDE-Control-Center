@@ -26,4 +26,5 @@ Clone or download the repository, then run the installer script:
 ```bash
 git clone https://github.com/EvoModsX/KDE-Control-Center.git
 cd "KDE-Control-Center"
+chmod +x install.sh
 ./install.sh
