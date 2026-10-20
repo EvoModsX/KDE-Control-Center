@@ -24,6 +24,6 @@ A modern, highly customizable Bento-grid style Control Center plasmoid for KDE P
 Clone or download the repository, then run the installer script:
 
 ```bash
-git clone [https://github.com/YOUR_USERNAME/YOUR_REPOSITORY_NAME.git](https://github.com/YOUR_USERNAME/YOUR_REPOSITORY_NAME.git)
-cd "YOUR_REPOSITORY_NAME"
+git clone https://github.com/EvoModsX/KDE-Control-Center.git
+cd "KDE-Control-Center"
 ./install.sh
