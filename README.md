@@ -1,6 +1,6 @@
-# Bento Grid Control Center for KDE Plasma
+# Custom Grid Control Center Widget for KDE Plasma
 
-A modern, highly customizable Bento-grid style Control Center plasmoid for KDE Plasma 6, featuring dynamic glassmorphism window blur, interactive media controls, system sliders, and a seamless one-click installer.
+A modern, highly customizable grid style Control Center plasmoid for KDE Plasma 6, featuring dynamic glassmorphism window blur, interactive media controls, system sliders, and a seamless one-click installer.
 
 ![KDE Plasma](https://img.shields.io/badge/KDE-Plasma_6-blue?style=flat-square&logo=kde)
 ![C++](https://img.shields.io/badge/C++-BlurHelper-orange?style=flat-square)
