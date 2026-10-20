@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kcfg xmlns="http://www.kde.org/standards/kcfg/1.0"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://www.kde.org/standards/kcfg/1.0
+      http://www.kde.org/standards/kcfg/1.0/kcfg.xsd" >
+  <kcfgfile name=""/>
+  <group name="General">
+    <!-- UI Scale -->
+    <entry name="uiScale" type="Double"><default>1.0</default></entry>
+
+    <!-- Tile Background & Alpha -->
+    <entry name="tileColor" type="Color"><default>#0a0a0a</default></entry>
+    <entry name="tileAlpha" type="Double"><default>0.50</default></entry>
+
+    <!-- Active / Inactive State Colors -->
+    <entry name="activeTileColor" type="Color"><default>#ffffff</default></entry>
+    <entry name="activeIconColor" type="Color"><default>#000000</default></entry>
+    <entry name="inactiveIconColor" type="Color"><default>#ffffff</default></entry>
+    <entry name="textColor" type="Color"><default>#ffffff</default></entry>
+
+    <!-- Active Style Fill Mode: 0 = Rounded Icon Pill, 1 = Full Tile Fill -->
+    <entry name="tileFillMode" type="Int"><default>0</default></entry>
+
+    <!-- Blur Toggle -->
+    <entry name="enableBlur" type="Bool"><default>true</default></entry>
+
+    <!-- Outline / Border -->
+    <entry name="showBorder" type="Bool"><default>false</default></entry>
+    <entry name="borderColor" type="Color"><default>#ffffff</default></entry>
+    <entry name="borderAlpha" type="Double"><default>0.15</default></entry>
+    <entry name="borderWidth" type="Int"><default>1</default></entry>
+    <!-- Icon Scale Factor -->
+    <entry name="iconScale" type="Double"><default>1.0</default></entry>
+    <!-- Shadow / Glow -->
+    <entry name="showShadow" type="Bool"><default>true</default></entry>
+    <entry name="shadowColor" type="Color"><default>#ffffff</default></entry>
+    <entry name="shadowAlpha" type="Double"><default>0.25</default></entry>
+    <entry name="shadowSize" type="Int"><default>16</default></entry>
+    <entry name="shadowSmoothing" type="Int"><default>12</default></entry>
+
+    <!-- Position & Layout -->
+    <entry name="popupPosition" type="Int"><default>0</default></entry>
+    <entry name="animSpeed" type="Double"><default>1.0</default></entry>
+    <!-- Animation Style: 0 = Elastic Bounce, 1 = Smooth Scale, 2 = Fade Only -->
+    <entry name="animStyle" type="Int"><default>0</default></entry>
+    <entry name="tileRadius" type="Int"><default>24</default></entry>
+    <entry name="tileSpacing" type="Int"><default>14</default></entry>
+    <entry name="edgeMargin" type="Int"><default>18</default></entry>
+    <entry name="panelHeightOffset" type="Int"><default>54</default></entry>
+
+    <!-- Storage -->
+    <entry name="tilePositions" type="String"><default>{}</default></entry>
+  </group>
+</kcfg>
