@@ -1,6 +1,4 @@
-<img width="367" height="513" alt="Screenshot1" src="https://github.com/user-attachments/assets/9c3f3ed9-1158-4886-bc85-e2c98d6af720" />
-<img width="384" height="601" alt="Screenshot2" src="https://github.com/user-attachments/assets/f6da650f-d1d1-4561-8ac7-663a8edcda92" />
-<img width="367" height="513" alt="Screenshot1" src="https://github.com/user-attachments/assets/6f054826-247d-4200-86be-68e81d0b2a3b" />
+
 # Custom Grid Control Center Widget for KDE Plasma
 
 A modern, highly customizable grid style Control Center plasmoid for KDE Plasma 6, featuring dynamic glassmorphism window blur, interactive media controls, system sliders, and a seamless one-click installer.
@@ -9,6 +7,7 @@ A modern, highly customizable grid style Control Center plasmoid for KDE Plasma 
 ![C++](https://img.shields.io/badge/C++-BlurHelper-orange?style=flat-square)
 
 ---
+<img width="384" height="601" alt="Screenshot2" src="https://github.com/user-attachments/assets/7bba4f01-2d27-436e-bc44-dac476a52dbb" />
 
 ## ✨ Features
 
@@ -21,6 +20,7 @@ A modern, highly customizable grid style Control Center plasmoid for KDE Plasma 
 - **Universal Installer**: Zero-hassle setup script that automatically checks/installs dependencies (`cmake`, `extra-cmake-modules`, compilers) across Arch/CachyOS, Fedora, Ubuntu, openSUSE, and more.
 
 ---
+<img width="367" height="513" alt="Screenshot1" src="https://github.com/user-attachments/assets/da2d3b9f-a776-44a9-bbde-8437bfb6d16b" />
 
 ## 🚀 Quick Installation
 
