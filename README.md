@@ -1,3 +1,6 @@
+<img width="367" height="513" alt="Screenshot1" src="https://github.com/user-attachments/assets/9c3f3ed9-1158-4886-bc85-e2c98d6af720" />
+<img width="384" height="601" alt="Screenshot2" src="https://github.com/user-attachments/assets/f6da650f-d1d1-4561-8ac7-663a8edcda92" />
+<img width="367" height="513" alt="Screenshot1" src="https://github.com/user-attachments/assets/6f054826-247d-4200-86be-68e81d0b2a3b" />
 # Custom Grid Control Center Widget for KDE Plasma
 
 A modern, highly customizable grid style Control Center plasmoid for KDE Plasma 6, featuring dynamic glassmorphism window blur, interactive media controls, system sliders, and a seamless one-click installer.
