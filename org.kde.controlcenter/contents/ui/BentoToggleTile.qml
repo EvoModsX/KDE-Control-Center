@@ -3,6 +3,7 @@ import QtQuick.Layouts
 import QtQuick.Controls
 import org.kde.plasma.components as PlasmaComponents
 import org.kde.kirigami as Kirigami
+import org.kde.plasma.plasmoid
 
 Kirigami.ShadowedRectangle {
     id: dTile
@@ -23,6 +24,8 @@ Kirigami.ShadowedRectangle {
     property bool activeState: false
     property string iconSource: ""
     signal tileClicked()
+    signal disconnectRequested()
+    signal settingsRequested()
 
     readonly property bool is2x2: spanCols === 2 && spanRows === 2
     readonly property bool isFullFill: dialogRoot.tileFillMode === 1
@@ -59,7 +62,7 @@ Kirigami.ShadowedRectangle {
         NumberAnimation { duration: 300; easing.type: Easing.OutBack; easing.overshoot: 1.02 }
     }
 
-    radius: dialogRoot.cfgRadius
+    radius: (Plasmoid.configuration.roundSmallTiles && ((spanCols === 1 && spanRows === 1) || (spanCols === 2 && spanRows === 1))) ? 36 : dialogRoot.cfgRadius
     color: (isFullFill && activeState) ? dialogRoot.activeTileColor : dialogRoot.tileBaseColor
     border.color: dialogRoot.editMode ? Qt.rgba(1, 1, 1, 0.35) : dialogRoot.tileBorderColor
     border.width: dialogRoot.tileBorderWidth
@@ -160,7 +163,6 @@ Kirigami.ShadowedRectangle {
 
         property real expansionProgress: Math.max(0.0, Math.min(1.0, (dTile.width - contentWrapper.cellW) / contentWrapper.cellW))
 
-        // Icon Container Pill
         Rectangle {
             id: iconCircle
             width: is2x2 ? 48 : 44
@@ -183,7 +185,6 @@ Kirigami.ShadowedRectangle {
             }
         }
 
-        // Horizontal Layout (1x1 & 2x1)
         ColumnLayout {
             anchors.left: iconCircle.right
             anchors.leftMargin: 12
@@ -234,7 +235,6 @@ Kirigami.ShadowedRectangle {
             }
         }
 
-        // Vertical Bottom-Left Stacked Layout (2x2)
         ColumnLayout {
             anchors.left: parent.left
             anchors.leftMargin: 16
@@ -271,6 +271,7 @@ Kirigami.ShadowedRectangle {
         id: tileMouse
         anchors.fill: parent
         hoverEnabled: true
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
         cursorShape: dialogRoot.editMode ? (pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor) : Qt.PointingHandCursor
         property real startX: 0
         property real startY: 0
@@ -290,7 +291,7 @@ Kirigami.ShadowedRectangle {
         onPressed: (mouse) => {
             tipTimer1.stop()
             showTip = false
-            if (dialogRoot.editMode) {
+            if (dialogRoot.editMode && mouse.button === Qt.LeftButton) {
                 dTile.isDragging = true
                 dTile.dragX = dTile.x
                 dTile.dragY = dTile.y
@@ -307,12 +308,29 @@ Kirigami.ShadowedRectangle {
         onReleased: {
             if (dialogRoot.editMode && dTile.isDragging) contentWrapper.handleTileDrop(dTile)
         }
-        onClicked: {
-            if (!dialogRoot.editMode) dTile.tileClicked()
+        onClicked: (mouse) => {
+            if (dialogRoot.editMode) return;
+            if (mouse.button === Qt.RightButton && (dTile.tileKey === "wifi" || dTile.tileKey === "bluetooth")) {
+                contextMenu.open()
+            } else if (mouse.button === Qt.LeftButton) {
+                dTile.tileClicked()
+            }
         }
 
         ToolTip.visible: showTip && !dialogRoot.editMode
         ToolTip.text: dTile.tileName
+    }
+
+    Menu {
+        id: contextMenu
+        MenuItem {
+            text: dTile.tileKey === "wifi" ? "Disconnect Network" : "Disconnect Device"
+            onTriggered: dTile.disconnectRequested()
+        }
+        MenuItem {
+            text: "Open Settings"
+            onTriggered: dTile.settingsRequested()
+        }
     }
 
     MouseArea {

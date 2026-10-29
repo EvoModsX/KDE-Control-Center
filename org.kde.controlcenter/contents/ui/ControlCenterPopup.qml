@@ -10,12 +10,21 @@ import org.user.blurhelper 1.0
 PlasmaCore.Dialog {
     id: dialogRoot
     title: "ControlCenterPopup"
-    type: PlasmaCore.Dialog.OnScreenDisplay
+    // OnScreenDisplay windows never take focus, so we never got deactivated when the user clicked
+    // another window. AppletPopup is activatable and behaves like a normal Plasma popup.
+    type: PlasmaCore.Dialog.AppletPopup
+    hideOnWindowDeactivate: false   // we close ourselves via onActiveChanged so the animation plays
     flags: Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
     location: PlasmaCore.Types.Floating
     backgroundHints: PlasmaCore.Dialog.NoBackground
 
     property bool editMode: false
+    property string activeSubView: ""
+
+    property var wifiNetworkList: []
+    property var bluetoothDeviceList: []
+    property alias contentWrapperRef: contentWrapper
+
     readonly property var blur: blurLoader.item || { update: function(){} }
     readonly property real uiScale: Math.max(0.5, Math.min(2.5, Plasmoid.configuration.uiScale || 1.0))
     readonly property color tileBaseColor: Qt.rgba(Plasmoid.configuration.tileColor.r, Plasmoid.configuration.tileColor.g, Plasmoid.configuration.tileColor.b, Plasmoid.configuration.tileAlpha)
@@ -57,7 +66,7 @@ PlasmaCore.Dialog {
     property bool kbdLightStatus: false
     property bool airplaneStatus: false
     property var defaultSink: null
-
+    property var audioSinks: []
     property string mediaTitle: "Not playing"
     property string mediaArtist: ""
     property string mediaStatus: "Stopped"
@@ -70,6 +79,10 @@ PlasmaCore.Dialog {
     signal setBrightnessRatio(int pct)
     signal toggleWifi()
     signal toggleBluetooth()
+    signal connectWifi(string ssid)
+    signal disconnectWifi()
+    signal connectBluetooth(string mac)
+    signal disconnectBluetooth(string mac)
     signal toggleDnd()
     signal toggleMic()
     signal toggleAudioMute()
@@ -89,8 +102,10 @@ PlasmaCore.Dialog {
     readonly property var allBentoTiles: [
         wifiTile, btTile, mediaTile, brightnessTile, volumeTile,
         brightnessTileH, volumeTileH,
+        brightnessTileM, volumeTileM, brightnessTileS, volumeTileS, brightnessTileV, volumeTileV,
         dndTile, kdeConnectTile, perfTile, saverTile, micTile,
-        muteTile, nightTile, clipTile, shotTile, kbdTile, airplaneTile, colorTile
+        muteTile, nightTile, clipTile, shotTile, kbdTile, airplaneTile, colorTile,
+        connectivityTile
     ]
 
     function saveTileLayout() {
@@ -167,18 +182,15 @@ PlasmaCore.Dialog {
             let delayFactor = 1.0 - (maxDist > 0 ? (tileData[i].dist / maxDist) : 0)
             tileData[i].tile.triggerAnim(isEntering, Math.round(delayFactor * maxDelayMs))
         }
-
-        if (!isEntering) {
-            dismissFinishTimer.interval = maxDelayMs + Math.round(150 / speedMultiplier) + 50
-            dismissFinishTimer.restart()
-        }
     }
 
     function closeWithAnim() {
         if (!dialogRoot.visible || _isClosing) return
             _isClosing = true
             editMode = false
-            dialogRoot.triggerCascades(false)
+            activeSubView = ""
+            blur.update()
+            closeDelayTimer.restart()
     }
 
     function repositionDialog() {
@@ -196,6 +208,7 @@ PlasmaCore.Dialog {
     onVisibleChanged: {
         if (!visible) {
             editMode = false
+            activeSubView = ""
             resetTileStates()
             _isClosing = false
         } else {
@@ -204,7 +217,13 @@ PlasmaCore.Dialog {
             resetTileStates()
             requestActivate()
             dialogRoot.triggerCascades(true)
+            Qt.callLater(() => repositionDialog())
         }
+    }
+
+    onActiveSubViewChanged: {
+        blur.update()
+        repositionDialog()
     }
 
     readonly property int calculatedRows: {
@@ -231,11 +250,13 @@ PlasmaCore.Dialog {
         loadTileLayout()
         contentWrapper.updateDrawerLayout()
         contentWrapper.applyGravity()
+        repositionDialog()
+        Qt.callLater(() => repositionDialog())
     }
 
     mainItem: FocusScope {
         id: container
-        readonly property int shadowMargin: Math.max(48, dialogRoot.computedShadowSize + 16)
+        readonly property int shadowMargin: Math.max(48, dialogRoot.computedShadowSize + 24)
         width: Math.round((contentWrapper.width + shadowMargin * 2) * dialogRoot.uiScale)
         height: Math.round((contentWrapper.height + shadowMargin * 2) * dialogRoot.uiScale)
         focus: true
@@ -248,8 +269,25 @@ PlasmaCore.Dialog {
             }
         }
 
+        Timer {
+            id: closeDelayTimer
+            interval: 1
+            onTriggered: {
+                dialogRoot.triggerCascades(false)
+                dismissFinishTimer.interval = Math.round(300 / speedMultiplier) + Math.round(200 / speedMultiplier)
+                dismissFinishTimer.restart()
+            }
+        }
+
         onWidthChanged: dialogRoot.repositionDialog()
         onHeightChanged: dialogRoot.repositionDialog()
+
+        // Re-sync the blur region with the animating tiles on every frame while closing
+        FrameAnimation {
+            running: dialogRoot._isClosing && dialogRoot.visible
+            onTriggered: dialogRoot.blur.update()
+        }
+
         Loader {
             id: blurLoader
             active: dialogRoot.visible && dialogRoot.enableBlur
@@ -257,20 +295,36 @@ PlasmaCore.Dialog {
                 BlurHelper {
                     window: dialogRoot
                     active: dialogRoot.visible && dialogRoot.enableBlur
-                    tiles: [
+                    tiles: (controlCenterDialog.activeSubView !== "" ? [] : [
                         powerTile, settingsTile, editTile, batteryTile, tileDrawer,
                         wifiTile, btTile, mediaTile, brightnessTile, volumeTile,
                         brightnessTileH, volumeTileH,
+                        brightnessTileM, volumeTileM, brightnessTileS, volumeTileS, brightnessTileV, volumeTileV,
                         dndTile, kdeConnectTile, perfTile, saverTile, micTile,
-                        muteTile, nightTile, clipTile, shotTile, kbdTile, airplaneTile, colorTile
-                    ]
+                        muteTile, nightTile, clipTile, shotTile, kbdTile, airplaneTile, colorTile,
+                        connectivityTile
+                    ]).concat(
+                        (controlCenterDialog.activeSubView === "wifi" || controlCenterDialog.activeSubView === "bluetooth") && typeof deviceSubView !== "undefined" && deviceSubView.activeTiles ? deviceSubView.activeTiles :
+                        controlCenterDialog.activeSubView === "media" && typeof mediaSubView !== "undefined" && mediaSubView.activeTiles ? mediaSubView.activeTiles : []
+                    )
                 }
             }
         }
 
+        // Clicks on the transparent margin around the popup (outside the tiles) close it
+        MouseArea {
+            anchors.fill: parent
+            z: -1
+            acceptedButtons: Qt.AllButtons
+            onPressed: dialogRoot.closeWithAnim()
+        }
+
         Keys.onPressed: (event) => {
             if (event.key === Qt.Key_Escape) {
-                if (dialogRoot.editMode) {
+                if (dialogRoot.activeSubView !== "") {
+                    dialogRoot.activeSubView = ""
+                    blur.update()
+                } else if (dialogRoot.editMode) {
                     dialogRoot.editMode = false
                 } else {
                     dialogRoot.closeWithAnim()
@@ -282,6 +336,7 @@ PlasmaCore.Dialog {
         Item {
             id: contentWrapper
 
+            readonly property int contentPadding: 16
             property real drawerAnimProgress: dialogRoot.editMode ? 1.0 : 0.0
             Behavior on drawerAnimProgress {
                 NumberAnimation {
@@ -290,43 +345,93 @@ PlasmaCore.Dialog {
                 }
             }
 
-            width: 336 + ((180 + dialogRoot.tileSpacing) * drawerAnimProgress)
-            height: headerRow.height + dialogRoot.tileSpacing + gridArea.height + 16
+            // Drawer is split in two categories side by side: sliders (drawer cols 0-1) | tiles (drawer cols 2-3)
+            readonly property real drawerInnerPad: 12
+            readonly property real drawerSectionGap: 20
+            readonly property real drawerSectionW: 2 * cellW + dialogRoot.tileSpacing
+            readonly property real drawerWidth: drawerInnerPad * 2 + drawerSectionW * 2 + drawerSectionGap
 
-            scale: dialogRoot.uiScale
+            width: 336 + (contentPadding * 2) + ((drawerWidth + dialogRoot.tileSpacing) * drawerAnimProgress)
+            height: {
+                if (dialogRoot.activeSubView === "media") return Math.min(Screen.height * 0.9, mediaSubView.wantedHeight);
+                if (dialogRoot.activeSubView === "wifi") return Math.min(Screen.height * 0.8, subViewHeight(wifiNetworkList.length));
+                if (dialogRoot.activeSubView === "bluetooth") return Math.min(Screen.height * 0.8, subViewHeight(bluetoothDeviceList.length));
+                return (contentPadding * 2) + headerRow.height + dialogRoot.tileSpacing + gridArea.height;
+            }
+            clip: true
+
+            Behavior on height {
+                NumberAnimation { duration: 200; easing.type: Easing.OutQuart }
+            }
+            onHeightChanged: dialogRoot.repositionDialog()
+
+            // Closing is driven by the per-tile dismiss cascade (reverse of the enter cascade).
+            // The wrapper must NOT fade on close, otherwise the tiles vanish while the blur region stays.
+            scale: dialogRoot.visible && !dialogRoot._isClosing ? 1.0 : 0.9
+            opacity: dialogRoot.visible ? 1.0 : 0.0
+            Behavior on scale {
+                NumberAnimation {
+                    duration: dialogRoot._isClosing
+                    ? Math.round(300 / dialogRoot.speedMultiplier)
+                    : Math.round(250 / dialogRoot.speedMultiplier)
+                    easing.type: dialogRoot._isClosing ? Easing.InQuad : Easing.OutBack
+                }
+            }
+            Behavior on opacity {
+                enabled: !dialogRoot._isClosing
+                NumberAnimation { duration: Math.round(200 / dialogRoot.speedMultiplier); easing.type: Easing.OutQuad }
+            }
+
             transformOrigin: dialogRoot.isBottomLeft ? Item.BottomLeft : Item.BottomRight
 
             anchors.bottom: parent.bottom
             anchors.bottomMargin: container.shadowMargin
-            anchors.right: dialogRoot.isBottomLeft ? undefined : parent.right
-            anchors.rightMargin: dialogRoot.isBottomLeft ? 0 : container.shadowMargin
-            anchors.left: dialogRoot.isBottomLeft ? parent.left : undefined
-            anchors.leftMargin: dialogRoot.isBottomLeft ? container.shadowMargin : 0
+            anchors.left: parent.left
+            anchors.leftMargin: container.shadowMargin
+
+            // Swallows clicks on the popup's own background/gaps so they don't hit the
+            // "click outside to close" area behind it
+            MouseArea {
+                anchors.fill: parent
+                z: -1
+                acceptedButtons: Qt.AllButtons
+            }
 
             readonly property real cellW: Math.round((336 - 3 * dialogRoot.tileSpacing) / 4)
             readonly property real cellH: cellW
+
+            // Exact height for DeviceSubView: outer padding (2*16) + inner margins (2*8)
+            // + header (40) + column spacing (4) + list (n rows of 56 with 8 spacing)
+            function subViewHeight(n) {
+                let rows = Math.max(1, n)
+                return (contentPadding * 2) + 16 + 40 + 4 + (rows * 56) + ((rows - 1) * 8)
+            }
 
             function getGridX(c) { return Math.round(gridArea.x + c * (cellW + dialogRoot.tileSpacing)) }
             function getGridY(r) { return Math.round(gridArea.y + r * (cellH + dialogRoot.tileSpacing)) }
             function getGridW(sc) { return Math.round(sc * cellW + (sc - 1) * dialogRoot.tileSpacing) }
             function getGridH(sr) { return Math.round(sr * cellH + (sr - 1) * dialogRoot.tileSpacing) }
-            function getDrawerX(c) { return Math.round(tileDrawer.x + 12 + c * (cellW + dialogRoot.tileSpacing)) }
+            function getDrawerX(c) { return Math.round(tileDrawer.x + drawerInnerPad + c * (cellW + dialogRoot.tileSpacing) + (c >= 2 ? drawerSectionGap : 0)) }
             function getDrawerY(r) { return Math.round(tileDrawer.y + 44 + r * (cellH + dialogRoot.tileSpacing)) }
 
             function updateDrawerLayout() {
                 let drawerTiles = dialogRoot.allBentoTiles.filter(t => t && t.inDrawer)
+                // 4 drawer columns: 0-1 = sliders, 2-3 = everything else
                 let grid = []
-                for (let i = 0; i < 50; i++) grid.push([false, false])
+                for (let i = 0; i < 60; i++) grid.push([false, false, false, false])
 
                     for (let i = 0; i < drawerTiles.length; i++) {
                         let t = drawerTiles[i]
+                        let isSlider = t.sliderStyle !== undefined
+                        let colStart = isSlider ? 0 : 2
+                        let colEnd = colStart + 2
                         let placed = false
                         for (let r = 0; r < 50 && !placed; r++) {
-                            for (let c = 0; c < 2 && !placed; c++) {
+                            for (let c = colStart; c < colEnd && !placed; c++) {
                                 let free = true
                                 for (let rr = 0; rr < t.spanRows; rr++) {
                                     for (let cc = 0; cc < t.spanCols; cc++) {
-                                        if (c + cc >= 2 || grid[r + rr][c + cc]) {
+                                        if (c + cc >= colEnd || grid[r + rr][c + cc]) {
                                             free = false
                                         }
                                     }
@@ -415,12 +520,13 @@ PlasmaCore.Dialog {
                     }
                 }
             }
+
             function formatArtUrl(url) {
                 if (!url || url === "") return ""
-                    // Handle local paths without file:// prefix
                     if (url.startsWith("/")) return "file://" + url
                         return url
             }
+
             function handleTileDrop(dragged) {
                 let cX = dragged.x + dragged.width / 2
                 let cY = dragged.y + dragged.height / 2
@@ -484,442 +590,720 @@ PlasmaCore.Dialog {
                 dialogRoot.saveTileLayout()
             }
 
-            // ================= HEADER ROW =================
-            RowLayout {
-                id: headerRow
-                anchors.top: parent.top
-                anchors.left: parent.left
-                width: 336
-                height: 38
-                spacing: 8
-
-                HeaderButton {
-                    id: powerTile
-                    dialogRoot: dialogRoot
-                    contentWrapper: contentWrapper
-                    blurHelper: blur
-                    iconSource: "system-shutdown"
-                    tooltipText: "Power"
-                    onClicked: dialogRoot.openPowerMenu()
-                }
-
-                HeaderButton {
-                    id: settingsTile
-                    dialogRoot: dialogRoot
-                    contentWrapper: contentWrapper
-                    blurHelper: blur
-                    iconSource: "settings-configure"
-                    tooltipText: "Settings"
-                    onClicked: dialogRoot.openSettings()
-                }
-
-                HeaderButton {
-                    id: editTile
-                    dialogRoot: dialogRoot
-                    contentWrapper: contentWrapper
-                    blurHelper: blur
-                    isEditButton: true
-                    iconSource: dialogRoot.editMode ? "dialog-ok-apply" : "document-edit"
-                    tooltipText: dialogRoot.editMode ? "Done Editing" : "Edit Grid"
-                    onClicked: dialogRoot.editMode = !dialogRoot.editMode
-                }
-
-                Item { Layout.fillWidth: true }
-
-                HeaderBattery {
-                    id: batteryTile
-                    dialogRoot: dialogRoot
-                    contentWrapper: contentWrapper
-                    blurHelper: blur
-                }
-            }
-
-            // Background Bento Grid slot indicator guides
+            // ================= MAIN VIEW =================
             Item {
-                id: gridArea
-                anchors.top: headerRow.bottom
-                anchors.topMargin: dialogRoot.tileSpacing
-                anchors.left: parent.left
-                width: 336
+                anchors.fill: parent
+                visible: opacity > 0
+                opacity: dialogRoot.activeSubView === "" ? 1.0 : 0.0
+                Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutQuad } }
+                onOpacityChanged: blur.update()
 
-                readonly property real targetHeight: Math.max(0, Math.round((dialogRoot.calculatedRows * contentWrapper.cellH) + ((dialogRoot.calculatedRows - 1) * dialogRoot.tileSpacing)))
-                height: targetHeight
-                Behavior on height { NumberAnimation { duration: 300; easing.type: Easing.OutQuart } }
-
-                Repeater {
-                    model: dialogRoot.calculatedRows * 4
-                    delegate: Rectangle {
-                        readonly property int r: Math.floor(index / 4)
-                        readonly property int c: index % 4
-                        x: Math.round(c * (contentWrapper.cellW + dialogRoot.tileSpacing))
-                        y: Math.round(r * (contentWrapper.cellH + dialogRoot.tileSpacing))
-                        width: contentWrapper.cellW
-                        height: contentWrapper.cellH
-                        radius: dialogRoot.cfgRadius
-                        color: Qt.rgba(1, 1, 1, 0.04)
-                        border.color: Qt.rgba(1, 1, 1, 0.16)
-                        border.width: 1
-                        visible: dialogRoot.editMode
-                    }
-                }
-            }
-
-            // Tile Drawer Background
-            Kirigami.ShadowedRectangle {
-                id: tileDrawer
-                anchors.top: parent.top
-                anchors.left: gridArea.right
-                anchors.leftMargin: dialogRoot.tileSpacing
-                width: 180
-                height: headerRow.height + dialogRoot.tileSpacing + gridArea.height
-                radius: dialogRoot.cfgRadius
-                color: Qt.rgba(0.08, 0.08, 0.08, 0.65)
-                border.color: Qt.rgba(1, 1, 1, 0.18)
-                border.width: 1
-
-                visible: contentWrapper.drawerAnimProgress > 0
-                opacity: contentWrapper.drawerAnimProgress
-                clip: false
-                z: 0
-
-                shadow {
-                    size: dialogRoot.showShadow ? dialogRoot.computedShadowSize : 0
-                    color: dialogRoot.showShadow ? dialogRoot.shadowColor : "transparent"
-                    xOffset: 0
-                    yOffset: 0
-                }
-
-                PlasmaComponents.Label {
+                RowLayout {
+                    id: headerRow
                     anchors.top: parent.top
-                    anchors.topMargin: 12
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    text: "Tile Drawer"
-                    font.pixelSize: 11
-                    font.bold: true
-                    opacity: 0.7
-                    color: dialogRoot.textColor
+                    anchors.topMargin: contentWrapper.contentPadding
+                    anchors.left: parent.left
+                    anchors.leftMargin: contentWrapper.contentPadding
+                    anchors.right: parent.right
+                    anchors.rightMargin: contentWrapper.contentPadding
+                    height: 38
+                    spacing: 8
+
+                    HeaderButton {
+                        id: powerTile
+                        dialogRoot: dialogRoot
+                        contentWrapper: contentWrapper
+                        blurHelper: blur
+                        iconSource: "system-shutdown"
+                        tooltipText: "Power"
+                        onClicked: dialogRoot.openPowerMenu()
+                    }
+
+                    HeaderButton {
+                        id: settingsTile
+                        dialogRoot: dialogRoot
+                        contentWrapper: contentWrapper
+                        blurHelper: blur
+                        iconSource: "settings-configure"
+                        tooltipText: "Settings"
+                        onClicked: dialogRoot.openSettings()
+                    }
+
+                    HeaderButton {
+                        id: editTile
+                        dialogRoot: dialogRoot
+                        contentWrapper: contentWrapper
+                        blurHelper: blur
+                        isEditButton: true
+                        iconSource: dialogRoot.editMode ? "dialog-ok-apply" : "document-edit"
+                        tooltipText: dialogRoot.editMode ? "Done Editing" : "Edit Grid"
+                        onClicked: dialogRoot.editMode = !dialogRoot.editMode
+                    }
+
+                    Item { Layout.fillWidth: true }
+
+                    HeaderBattery {
+                        id: batteryTile
+                        dialogRoot: dialogRoot
+                        contentWrapper: contentWrapper
+                        blurHelper: blur
+                    }
                 }
-            }
 
-            // ================= ALL BENTO TILES =================
-            BentoToggleTile {
-                id: wifiTile
-                dialogRoot: dialogRoot
-                contentWrapper: contentWrapper
-                blurHelper: blur
-                tileKey: "wifi"
-                inDrawer: false
-                gridCol: 0
-                gridRow: 0
-                spanCols: 2
-                tileName: dialogRoot.wifiStatus && dialogRoot.wifiSsid !== "" ? dialogRoot.wifiSsid : "Wi-Fi"
-                subtitleText: dialogRoot.wifiStatus ? "Connected" : "Off"
-                iconSource: "network-wireless-symbolic"
-                activeState: dialogRoot.wifiStatus
-                onTileClicked: dialogRoot.toggleWifi()
-            }
+                Item {
+                    id: gridArea
+                    anchors.top: headerRow.bottom
+                    anchors.topMargin: dialogRoot.tileSpacing
+                    anchors.left: parent.left
+                    anchors.leftMargin: contentWrapper.contentPadding
+                    width: 336
 
-            BentoToggleTile {
-                id: btTile
-                dialogRoot: dialogRoot
-                contentWrapper: contentWrapper
-                blurHelper: blur
-                tileKey: "bluetooth"
-                inDrawer: false
-                gridCol: 2
-                gridRow: 0
-                spanCols: 2
-                tileName: "Bluetooth"
-                subtitleText: dialogRoot.btStatus ? "On" : "Off"
-                iconSource: "preferences-system-bluetooth"
-                activeState: dialogRoot.btStatus
-                onTileClicked: dialogRoot.toggleBluetooth()
-            }
+                    readonly property real targetHeight: Math.max(0, Math.round((dialogRoot.calculatedRows * contentWrapper.cellH) + ((dialogRoot.calculatedRows - 1) * dialogRoot.tileSpacing)))
+                    height: targetHeight
+                    Behavior on height { NumberAnimation { duration: 300; easing.type: Easing.OutQuart } }
 
-            BentoMediaTile {
-                id: mediaTile
-                dialogRoot: dialogRoot
-                contentWrapper: contentWrapper
-                blurHelper: blur
-                inDrawer: false
-                gridCol: 0
-                gridRow: 1
-            }
-
-            BentoSliderTile {
-                id: brightnessTile
-                dialogRoot: dialogRoot
-                contentWrapper: contentWrapper
-                blurHelper: blur
-                tileKey: "brightness"
-                inDrawer: false
-                gridCol: 2
-                gridRow: 1
-                currentRatio: dialogRoot.brightnessRatio
-                iconSource: "brightness-high"
-                tooltipText: "Screen Brightness"
-                clampBottom: true
-                onRatioSet: (r) => dialogRoot.setBrightnessRatio(Math.round(r * 100))
-                onRatioReleased: (r) => dialogRoot.setBrightnessRatio(Math.round(r * 100))
-                Connections {
-                    target: dialogRoot
-                    function onBrightnessRatioChanged() {
-                        if (!brightnessTile.isSliderPressed && dialogRoot.brightnessRatio > 0) {
-                            brightnessTile.currentRatio = dialogRoot.brightnessRatio
+                    Repeater {
+                        model: dialogRoot.calculatedRows * 4
+                        delegate: Rectangle {
+                            readonly property int r: Math.floor(index / 4)
+                            readonly property int c: index % 4
+                            x: Math.round(c * (contentWrapper.cellW + dialogRoot.tileSpacing))
+                            y: Math.round(r * (contentWrapper.cellH + dialogRoot.tileSpacing))
+                            width: contentWrapper.cellW
+                            height: contentWrapper.cellH
+                            radius: dialogRoot.cfgRadius
+                            color: Qt.rgba(1, 1, 1, 0.04)
+                            border.color: Qt.rgba(1, 1, 1, 0.16)
+                            border.width: 1
+                            visible: dialogRoot.editMode
                         }
                     }
                 }
-            }
 
-            BentoSliderTile {
-                id: volumeTile
-                dialogRoot: dialogRoot
-                contentWrapper: contentWrapper
-                blurHelper: blur
-                tileKey: "volume"
-                inDrawer: false
-                gridCol: 3
-                gridRow: 1
-                currentRatio: dialogRoot.volumeRatio
-                iconSource: (dialogRoot.volumeRatio > 0.5) ? "audio-volume-high" : (dialogRoot.volumeRatio > 0.05) ? "audio-volume-medium" : "audio-volume-muted"
-                tooltipText: "Volume"
-                clampBottom: false
-                onRatioSet: (r) => dialogRoot.setVolumeRatio(r)
-                onRatioReleased: (r) => dialogRoot.setVolumeRatio(r)
-                Connections {
-                    target: dialogRoot
-                    function onVolumeRatioChanged() {
-                        if (!volumeTile.isSliderPressed && dialogRoot.volumeRatio >= 0) {
-                            volumeTile.currentRatio = dialogRoot.volumeRatio
+                Kirigami.ShadowedRectangle {
+                    id: tileDrawer
+                    anchors.top: parent.top
+                    anchors.topMargin: contentWrapper.contentPadding
+                    anchors.left: gridArea.right
+                    anchors.leftMargin: dialogRoot.tileSpacing
+                    width: contentWrapper.drawerWidth
+                    height: headerRow.height + dialogRoot.tileSpacing + gridArea.height
+                    radius: dialogRoot.cfgRadius
+                    color: Qt.rgba(0.08, 0.08, 0.08, 0.65)
+                    border.color: Qt.rgba(1, 1, 1, 0.18)
+                    border.width: 1
+
+                    visible: contentWrapper.drawerAnimProgress > 0
+                    opacity: contentWrapper.drawerAnimProgress
+                    clip: false
+                    z: 0
+
+                    shadow {
+                        size: dialogRoot.showShadow ? dialogRoot.computedShadowSize : 0
+                        color: dialogRoot.showShadow ? dialogRoot.shadowColor : "transparent"
+                        xOffset: 0
+                        yOffset: 0
+                    }
+
+                    PlasmaComponents.Label {
+                        x: contentWrapper.drawerInnerPad
+                        width: contentWrapper.drawerSectionW
+                        anchors.top: parent.top
+                        anchors.topMargin: 12
+                        horizontalAlignment: Text.AlignHCenter
+                        text: "Sliders"
+                        font.pixelSize: 11
+                        font.bold: true
+                        opacity: 0.7
+                        color: dialogRoot.textColor
+                    }
+
+                    PlasmaComponents.Label {
+                        x: contentWrapper.drawerInnerPad + contentWrapper.drawerSectionW + contentWrapper.drawerSectionGap
+                        width: contentWrapper.drawerSectionW
+                        anchors.top: parent.top
+                        anchors.topMargin: 12
+                        horizontalAlignment: Text.AlignHCenter
+                        text: "Tiles"
+                        font.pixelSize: 11
+                        font.bold: true
+                        opacity: 0.7
+                        color: dialogRoot.textColor
+                    }
+
+                    // divider between the two categories
+                    Rectangle {
+                        x: contentWrapper.drawerInnerPad + contentWrapper.drawerSectionW + (contentWrapper.drawerSectionGap - width) / 2
+                        y: 40
+                        width: 1
+                        height: parent.height - 52
+                        color: Qt.rgba(1, 1, 1, 0.18)
+                    }
+                }
+
+                // ================= ALL BENTO TILES =================
+                BentoToggleTile {
+                    id: wifiTile
+                    dialogRoot: dialogRoot
+                    contentWrapper: contentWrapper
+                    blurHelper: blur
+                    tileKey: "wifi"
+                    inDrawer: false
+                    gridCol: 0
+                    gridRow: 0
+                    spanCols: 2
+                    tileName: dialogRoot.wifiStatus && dialogRoot.wifiSsid !== "" ? dialogRoot.wifiSsid : "Wi-Fi"
+                    subtitleText: dialogRoot.wifiStatus ? "Connected" : "Off"
+                    iconSource: "network-wireless-symbolic"
+                    activeState: dialogRoot.wifiStatus
+                    onTileClicked: dialogRoot.toggleWifi()
+
+                    MouseArea {
+                        anchors.fill: parent
+                        acceptedButtons: Qt.RightButton | Qt.MiddleButton
+                        onClicked: (mouse) => {
+                            if (mouse.button === Qt.RightButton) {
+                                dialogRoot.activeSubView = "wifi"
+                                blur.update()
+                            } else if (mouse.button === Qt.MiddleButton) {
+                                dialogRoot.closeWithAnim()
+                            }
+                        }
+                        onWheel: (wheel) => {
+                            if (!dialogRoot.editMode && wheel.angleDelta.y < 0) {
+                                dialogRoot.activeSubView = "wifi"
+                                blur.update()
+                            }
                         }
                     }
                 }
-            }
+                BentoToggleTile {
+                    id: btTile
+                    dialogRoot: dialogRoot
+                    contentWrapper: contentWrapper
+                    blurHelper: blur
+                    tileKey: "bluetooth"
+                    inDrawer: false
+                    gridCol: 2
+                    gridRow: 0
+                    spanCols: 2
+                    tileName: "Bluetooth"
+                    subtitleText: {
+                        if (!dialogRoot.btStatus) return "Off";
+                        let connectedDev = dialogRoot.bluetoothDeviceList.find(d => d.connected);
+                        return connectedDev ? connectedDev.name : "On";
+                    }
+                    iconSource: "preferences-system-bluetooth"
+                    activeState: dialogRoot.btStatus
+                    onTileClicked: dialogRoot.toggleBluetooth()
 
-            // Alternate Horizontal Sliders
-            BentoSliderTile {
-                id: brightnessTileH
-                dialogRoot: dialogRoot
-                contentWrapper: contentWrapper
-                blurHelper: blur
-                tileKey: "brightness_h"
-                inDrawer: true
-                spanCols: 2
-                spanRows: 1
-                currentRatio: dialogRoot.brightnessRatio
-                iconSource: "brightness-high"
-                tooltipText: "Screen Brightness"
-                clampBottom: true
-                onRatioSet: (r) => dialogRoot.setBrightnessRatio(Math.round(r * 100))
-                onRatioReleased: (r) => dialogRoot.setBrightnessRatio(Math.round(r * 100))
-                Connections {
-                    target: dialogRoot
-                    function onBrightnessRatioChanged() {
-                        if (!brightnessTileH.isSliderPressed && dialogRoot.brightnessRatio > 0) {
-                            brightnessTileH.currentRatio = dialogRoot.brightnessRatio
+                    MouseArea {
+                        anchors.fill: parent
+                        acceptedButtons: Qt.RightButton | Qt.MiddleButton
+                        onClicked: (mouse) => {
+                            if (mouse.button === Qt.RightButton) {
+                                dialogRoot.activeSubView = "bluetooth"
+                                blur.update()
+                            } else if (mouse.button === Qt.MiddleButton) {
+                                dialogRoot.closeWithAnim()
+                            }
                         }
                     }
                 }
-            }
 
-            BentoSliderTile {
-                id: volumeTileH
-                dialogRoot: dialogRoot
-                contentWrapper: contentWrapper
-                blurHelper: blur
-                tileKey: "volume_h"
-                inDrawer: true
-                spanCols: 2
-                spanRows: 1
-                currentRatio: dialogRoot.volumeRatio
-                iconSource: (dialogRoot.volumeRatio > 0.5) ? "audio-volume-high" : (dialogRoot.volumeRatio > 0.05) ? "audio-volume-medium" : "audio-volume-muted"
-                tooltipText: "Volume"
-                clampBottom: false
-                onRatioSet: (r) => dialogRoot.setVolumeRatio(r)
-                onRatioReleased: (r) => dialogRoot.setVolumeRatio(r)
-                Connections {
-                    target: dialogRoot
-                    function onVolumeRatioChanged() {
-                        if (!volumeTileH.isSliderPressed && dialogRoot.volumeRatio >= 0) {
-                            volumeTileH.currentRatio = dialogRoot.volumeRatio
+                BentoMediaTile {
+                    id: mediaTile
+                    dialogRoot: dialogRoot
+                    contentWrapper: contentWrapper
+                    blurHelper: blur
+                    inDrawer: false
+                    gridCol: 0
+                    gridRow: 1
+                }
+
+                BentoSliderTile {
+                    id: brightnessTile
+                    dialogRoot: dialogRoot
+                    contentWrapper: contentWrapper
+                    blurHelper: blur
+                    tileKey: "brightness"
+                    inDrawer: false
+                    gridCol: 2
+                    gridRow: 1
+                    currentRatio: dialogRoot.brightnessRatio
+                    iconSource: "brightness-high"
+                    tooltipText: "Screen Brightness"
+                    clampBottom: true
+                    onRatioSet: (r) => dialogRoot.setBrightnessRatio(Math.round(r * 100))
+                    onRatioReleased: (r) => dialogRoot.setBrightnessRatio(Math.round(r * 100))
+                    Connections {
+                        target: dialogRoot
+                        function onBrightnessRatioChanged() {
+                            if (!brightnessTile.isSliderPressed && dialogRoot.brightnessRatio > 0) {
+                                brightnessTile.currentRatio = dialogRoot.brightnessRatio
+                            }
                         }
                     }
                 }
+
+                BentoSliderTile {
+                    id: volumeTile
+                    dialogRoot: dialogRoot
+                    contentWrapper: contentWrapper
+                    blurHelper: blur
+                    tileKey: "volume"
+                    inDrawer: false
+                    gridCol: 3
+                    gridRow: 1
+                    currentRatio: dialogRoot.volumeRatio
+                    iconSource: (dialogRoot.volumeRatio > 0.5) ? "audio-volume-high" : (dialogRoot.volumeRatio > 0.05) ? "audio-volume-medium" : "audio-volume-muted"
+                    tooltipText: "Volume"
+                    clampBottom: false
+                    onRatioSet: (r) => dialogRoot.setVolumeRatio(r)
+                    onRatioReleased: (r) => dialogRoot.setVolumeRatio(r)
+                    Connections {
+                        target: dialogRoot
+                        function onVolumeRatioChanged() {
+                            if (!volumeTile.isSliderPressed && dialogRoot.volumeRatio >= 0) {
+                                volumeTile.currentRatio = dialogRoot.volumeRatio
+                            }
+                        }
+                    }
+                }
+
+                BentoSliderTile {
+                    id: brightnessTileH
+                    dialogRoot: dialogRoot
+                    contentWrapper: contentWrapper
+                    blurHelper: blur
+                    tileKey: "brightness_h"
+                    inDrawer: true
+                    spanCols: 2
+                    spanRows: 1
+                    currentRatio: dialogRoot.brightnessRatio
+                    iconSource: "brightness-high"
+                    tooltipText: "Screen Brightness"
+                    clampBottom: true
+                    onRatioSet: (r) => dialogRoot.setBrightnessRatio(Math.round(r * 100))
+                    onRatioReleased: (r) => dialogRoot.setBrightnessRatio(Math.round(r * 100))
+                    Connections {
+                        target: dialogRoot
+                        function onBrightnessRatioChanged() {
+                            if (!brightnessTileH.isSliderPressed && dialogRoot.brightnessRatio > 0) {
+                                brightnessTileH.currentRatio = dialogRoot.brightnessRatio
+                            }
+                        }
+                    }
+                }
+
+                BentoSliderTile {
+                    id: volumeTileH
+                    dialogRoot: dialogRoot
+                    contentWrapper: contentWrapper
+                    blurHelper: blur
+                    tileKey: "volume_h"
+                    inDrawer: true
+                    spanCols: 2
+                    spanRows: 1
+                    currentRatio: dialogRoot.volumeRatio
+                    iconSource: (dialogRoot.volumeRatio > 0.5) ? "audio-volume-high" : (dialogRoot.volumeRatio > 0.05) ? "audio-volume-medium" : "audio-volume-muted"
+                    tooltipText: "Volume"
+                    clampBottom: false
+                    onRatioSet: (r) => dialogRoot.setVolumeRatio(r)
+                    onRatioReleased: (r) => dialogRoot.setVolumeRatio(r)
+                    Connections {
+                        target: dialogRoot
+                        function onVolumeRatioChanged() {
+                            if (!volumeTileH.isSliderPressed && dialogRoot.volumeRatio >= 0) {
+                                volumeTileH.currentRatio = dialogRoot.volumeRatio
+                            }
+                        }
+                    }
+                }
+
+                BentoSliderTile {
+                    id: brightnessTileM
+                    dialogRoot: dialogRoot
+                    contentWrapper: contentWrapper
+                    blurHelper: blur
+                    tileKey: "brightness_mac"
+                    inDrawer: true
+                    spanCols: 2
+                    spanRows: 1
+                    sliderStyle: "mac"
+                    titleText: "Display"
+                    currentRatio: dialogRoot.brightnessRatio
+                    iconSource: "brightness-high"
+                    tooltipText: "Screen Brightness"
+                    clampBottom: true
+                    onRatioSet: (r) => dialogRoot.setBrightnessRatio(Math.round(r * 100))
+                    onRatioReleased: (r) => dialogRoot.setBrightnessRatio(Math.round(r * 100))
+                    Connections {
+                        target: dialogRoot
+                        function onBrightnessRatioChanged() {
+                            if (!brightnessTileM.isSliderPressed && dialogRoot.brightnessRatio > 0) {
+                                brightnessTileM.currentRatio = dialogRoot.brightnessRatio
+                            }
+                        }
+                    }
+                }
+
+                BentoSliderTile {
+                    id: volumeTileM
+                    dialogRoot: dialogRoot
+                    contentWrapper: contentWrapper
+                    blurHelper: blur
+                    tileKey: "volume_mac"
+                    inDrawer: true
+                    spanCols: 2
+                    spanRows: 1
+                    sliderStyle: "mac"
+                    titleText: "Sound"
+                    currentRatio: dialogRoot.volumeRatio
+                    iconSource: (dialogRoot.volumeRatio > 0.5) ? "audio-volume-high" : (dialogRoot.volumeRatio > 0.05) ? "audio-volume-medium" : "audio-volume-muted"
+                    tooltipText: "Volume"
+                    clampBottom: false
+                    onRatioSet: (r) => dialogRoot.setVolumeRatio(r)
+                    onRatioReleased: (r) => dialogRoot.setVolumeRatio(r)
+                    Connections {
+                        target: dialogRoot
+                        function onVolumeRatioChanged() {
+                            if (!volumeTileM.isSliderPressed && dialogRoot.volumeRatio >= 0) {
+                                volumeTileM.currentRatio = dialogRoot.volumeRatio
+                            }
+                        }
+                    }
+                }
+
+                BentoSliderTile {
+                    id: brightnessTileS
+                    dialogRoot: dialogRoot
+                    contentWrapper: contentWrapper
+                    blurHelper: blur
+                    tileKey: "brightness_slim"
+                    inDrawer: true
+                    spanCols: 2
+                    spanRows: 1
+                    sliderStyle: "slim"
+                    titleText: "Display"
+                    currentRatio: dialogRoot.brightnessRatio
+                    iconSource: "brightness-high"
+                    tooltipText: "Screen Brightness"
+                    clampBottom: true
+                    onRatioSet: (r) => dialogRoot.setBrightnessRatio(Math.round(r * 100))
+                    onRatioReleased: (r) => dialogRoot.setBrightnessRatio(Math.round(r * 100))
+                    Connections {
+                        target: dialogRoot
+                        function onBrightnessRatioChanged() {
+                            if (!brightnessTileS.isSliderPressed && dialogRoot.brightnessRatio > 0) {
+                                brightnessTileS.currentRatio = dialogRoot.brightnessRatio
+                            }
+                        }
+                    }
+                }
+
+                BentoSliderTile {
+                    id: volumeTileS
+                    dialogRoot: dialogRoot
+                    contentWrapper: contentWrapper
+                    blurHelper: blur
+                    tileKey: "volume_slim"
+                    inDrawer: true
+                    spanCols: 2
+                    spanRows: 1
+                    sliderStyle: "slim"
+                    titleText: "Sound"
+                    currentRatio: dialogRoot.volumeRatio
+                    iconSource: (dialogRoot.volumeRatio > 0.5) ? "audio-volume-high" : (dialogRoot.volumeRatio > 0.05) ? "audio-volume-medium" : "audio-volume-muted"
+                    tooltipText: "Volume"
+                    clampBottom: false
+                    onRatioSet: (r) => dialogRoot.setVolumeRatio(r)
+                    onRatioReleased: (r) => dialogRoot.setVolumeRatio(r)
+                    Connections {
+                        target: dialogRoot
+                        function onVolumeRatioChanged() {
+                            if (!volumeTileS.isSliderPressed && dialogRoot.volumeRatio >= 0) {
+                                volumeTileS.currentRatio = dialogRoot.volumeRatio
+                            }
+                        }
+                    }
+                }
+
+                BentoSliderTile {
+                    id: brightnessTileV
+                    dialogRoot: dialogRoot
+                    contentWrapper: contentWrapper
+                    blurHelper: blur
+                    tileKey: "brightness_slimv"
+                    inDrawer: true
+                    spanCols: 1
+                    spanRows: 2
+                    sliderStyle: "slimV"
+                    titleText: "Display"
+                    currentRatio: dialogRoot.brightnessRatio
+                    iconSource: "brightness-high"
+                    tooltipText: "Screen Brightness"
+                    clampBottom: true
+                    onRatioSet: (r) => dialogRoot.setBrightnessRatio(Math.round(r * 100))
+                    onRatioReleased: (r) => dialogRoot.setBrightnessRatio(Math.round(r * 100))
+                    Connections {
+                        target: dialogRoot
+                        function onBrightnessRatioChanged() {
+                            if (!brightnessTileV.isSliderPressed && dialogRoot.brightnessRatio > 0) {
+                                brightnessTileV.currentRatio = dialogRoot.brightnessRatio
+                            }
+                        }
+                    }
+                }
+
+                BentoSliderTile {
+                    id: volumeTileV
+                    dialogRoot: dialogRoot
+                    contentWrapper: contentWrapper
+                    blurHelper: blur
+                    tileKey: "volume_slimv"
+                    inDrawer: true
+                    spanCols: 1
+                    spanRows: 2
+                    sliderStyle: "slimV"
+                    titleText: "Sound"
+                    currentRatio: dialogRoot.volumeRatio
+                    iconSource: (dialogRoot.volumeRatio > 0.5) ? "audio-volume-high" : (dialogRoot.volumeRatio > 0.05) ? "audio-volume-medium" : "audio-volume-muted"
+                    tooltipText: "Volume"
+                    clampBottom: false
+                    onRatioSet: (r) => dialogRoot.setVolumeRatio(r)
+                    onRatioReleased: (r) => dialogRoot.setVolumeRatio(r)
+                    Connections {
+                        target: dialogRoot
+                        function onVolumeRatioChanged() {
+                            if (!volumeTileV.isSliderPressed && dialogRoot.volumeRatio >= 0) {
+                                volumeTileV.currentRatio = dialogRoot.volumeRatio
+                            }
+                        }
+                    }
+                }
+
+                BentoToggleTile {
+                    id: dndTile
+                    dialogRoot: dialogRoot
+                    contentWrapper: contentWrapper
+                    blurHelper: blur
+                    tileKey: "dnd"
+                    inDrawer: true
+                    spanCols: 1
+                    spanRows: 1
+                    tileName: "Do Not Disturb"
+                    subtitleText: dialogRoot.dndStatus ? "On" : "Off"
+                    iconSource: "notifications-disabled"
+                    activeState: dialogRoot.dndStatus
+                    onTileClicked: dialogRoot.toggleDnd()
+                }
+
+                BentoToggleTile {
+                    id: kdeConnectTile
+                    dialogRoot: dialogRoot
+                    contentWrapper: contentWrapper
+                    blurHelper: blur
+                    tileKey: "kdeconnect"
+                    inDrawer: true
+                    spanCols: 1
+                    spanRows: 1
+                    tileName: "KDE Connect"
+                    subtitleText: "Connected"
+                    iconSource: "kdeconnect"
+                    activeState: false
+                    onTileClicked: dialogRoot.openKdeConnect()
+                }
+
+                BentoToggleTile {
+                    id: perfTile
+                    dialogRoot: dialogRoot
+                    contentWrapper: contentWrapper
+                    blurHelper: blur
+                    tileKey: "perf"
+                    inDrawer: true
+                    spanCols: 1
+                    spanRows: 1
+                    tileName: "Performance"
+                    subtitleText: dialogRoot.powerProfile
+                    iconSource: "cpu"
+                    activeState: dialogRoot.powerProfile === "performance"
+                    onTileClicked: {
+                        let next = dialogRoot.powerProfile === "balanced" ? "performance" : (dialogRoot.powerProfile === "performance" ? "power-saver" : "balanced")
+                        dialogRoot.setPerformanceMode(next)
+                    }
+                }
+
+                BentoToggleTile {
+                    id: saverTile
+                    dialogRoot: dialogRoot
+                    contentWrapper: contentWrapper
+                    blurHelper: blur
+                    tileKey: "saver"
+                    inDrawer: true
+                    spanCols: 1
+                    spanRows: 1
+                    tileName: "Power Saver"
+                    subtitleText: dialogRoot.powerProfile === "power-saver" ? "Active" : "Inactive"
+                    iconSource: "battery-low"
+                    activeState: dialogRoot.powerProfile === "power-saver"
+                    onTileClicked: dialogRoot.setPerformanceMode(dialogRoot.powerProfile === "power-saver" ? "balanced" : "power-saver")
+                }
+
+                BentoToggleTile {
+                    id: micTile
+                    dialogRoot: dialogRoot
+                    contentWrapper: contentWrapper
+                    blurHelper: blur
+                    tileKey: "mic"
+                    inDrawer: true
+                    spanCols: 1
+                    spanRows: 1
+                    tileName: "Microphone"
+                    subtitleText: dialogRoot.micMuted ? "Muted" : "Active"
+                    iconSource: dialogRoot.micMuted ? "microphone-sensitivity-muted" : "microphone-sensitivity-high"
+                    activeState: !dialogRoot.micMuted
+                    onTileClicked: dialogRoot.toggleMic()
+                }
+
+                BentoToggleTile {
+                    id: muteTile
+                    dialogRoot: dialogRoot
+                    contentWrapper: contentWrapper
+                    blurHelper: blur
+                    tileKey: "mute"
+                    inDrawer: true
+                    spanCols: 1
+                    spanRows: 1
+                    tileName: "Audio Mute"
+                    subtitleText: dialogRoot.audioMuted ? "Muted" : "Active"
+                    iconSource: dialogRoot.audioMuted ? "audio-volume-muted" : "audio-volume-high"
+                    activeState: !dialogRoot.audioMuted
+                    onTileClicked: dialogRoot.toggleAudioMute()
+                }
+
+                BentoToggleTile {
+                    id: nightTile
+                    dialogRoot: dialogRoot
+                    contentWrapper: contentWrapper
+                    blurHelper: blur
+                    tileKey: "night"
+                    inDrawer: true
+                    spanCols: 1
+                    spanRows: 1
+                    tileName: "Night Light"
+                    subtitleText: dialogRoot.nightLightStatus ? "On" : "Off"
+                    iconSource: "preferences-desktop-display-nightcolor"
+                    activeState: dialogRoot.nightLightStatus
+                    onTileClicked: dialogRoot.toggleNightLight()
+                }
+
+                BentoToggleTile {
+                    id: clipTile
+                    dialogRoot: dialogRoot
+                    contentWrapper: contentWrapper
+                    blurHelper: blur
+                    tileKey: "clipboard"
+                    inDrawer: true
+                    spanCols: 1
+                    spanRows: 1
+                    tileName: "Clipboard"
+                    subtitleText: "History"
+                    iconSource: "edit-paste"
+                    activeState: false
+                    onTileClicked: dialogRoot.openClipboard()
+                }
+
+                BentoToggleTile {
+                    id: shotTile
+                    dialogRoot: dialogRoot
+                    contentWrapper: contentWrapper
+                    blurHelper: blur
+                    tileKey: "screenshot"
+                    inDrawer: true
+                    spanCols: 1
+                    spanRows: 1
+                    tileName: "Screenshot"
+                    subtitleText: "Capture"
+                    iconSource: "spectacle"
+                    activeState: false
+                    onTileClicked: dialogRoot.openScreenshot()
+                }
+
+                BentoToggleTile {
+                    id: kbdTile
+                    dialogRoot: dialogRoot
+                    contentWrapper: contentWrapper
+                    blurHelper: blur
+                    tileKey: "kbd"
+                    inDrawer: true
+                    spanCols: 1
+                    spanRows: 1
+                    tileName: "Keyboard Light"
+                    subtitleText: dialogRoot.kbdLightStatus ? "On" : "Off"
+                    iconSource: "input-keyboard"
+                    activeState: dialogRoot.kbdLightStatus
+                    onTileClicked: dialogRoot.toggleKbdBacklight()
+                }
+
+                BentoToggleTile {
+                    id: airplaneTile
+                    dialogRoot: dialogRoot
+                    contentWrapper: contentWrapper
+                    blurHelper: blur
+                    tileKey: "airplane"
+                    inDrawer: true
+                    spanCols: 1
+                    spanRows: 1
+                    tileName: "Airplane Mode"
+                    subtitleText: dialogRoot.airplaneStatus ? "On" : "Off"
+                    iconSource: "network-flightmode"
+                    activeState: dialogRoot.airplaneStatus
+                    onTileClicked: dialogRoot.toggleAirplaneMode()
+                }
+
+                BentoToggleTile {
+                    id: colorTile
+                    dialogRoot: dialogRoot
+                    contentWrapper: contentWrapper
+                    blurHelper: blur
+                    tileKey: "color"
+                    inDrawer: true
+                    spanCols: 1
+                    spanRows: 1
+                    tileName: "Color Scheme"
+                    subtitleText: "Customize"
+                    iconSource: "applications-graphics"
+                    activeState: false
+                    onTileClicked: dialogRoot.openColorPicker()
+                }
+
+                BentoConnectivityTile {
+                    id: connectivityTile
+                    dialogRoot: dialogRoot
+                    contentWrapper: contentWrapper
+                    blurHelper: blur
+                    tileKey: "connectivity"
+                    inDrawer: true
+                    spanCols: 2
+                    spanRows: 2
+                }
             }
 
-            BentoToggleTile {
-                id: dndTile
+            // ================= SUB-VIEW PANEL =================
+            DeviceSubView {
+                id: deviceSubView
+                anchors.fill: parent
+                anchors.margins: contentWrapper.contentPadding
                 dialogRoot: dialogRoot
-                contentWrapper: contentWrapper
                 blurHelper: blur
-                tileKey: "dnd"
-                inDrawer: false
-                gridCol: 0
-                gridRow: 3
-                spanCols: 2
-                tileName: "Do Not Disturb"
-                subtitleText: dialogRoot.dndStatus ? "On" : "Off"
-                iconSource: dialogRoot.dndStatus ? "notifications-disabled" : "notifications"
-                activeState: dialogRoot.dndStatus
-                onTileClicked: dialogRoot.toggleDnd()
+                isWifi: dialogRoot.activeSubView === "wifi"
             }
-
-            BentoToggleTile {
-                id: kdeConnectTile
+            MediaSubView {
+                id: mediaSubView
+                anchors.fill: parent
                 dialogRoot: dialogRoot
-                contentWrapper: contentWrapper
                 blurHelper: blur
-                tileKey: "kdeconnect"
-                inDrawer: false
-                gridCol: 2
-                gridRow: 3
-                spanCols: 2
-                tileName: "KDE Connect"
-                subtitleText: "Open"
-                iconSource: "kdeconnect"
-                activeState: false
-                onTileClicked: dialogRoot.openKdeConnect()
-            }
-
-            // Drawer Toggle Tiles
-            BentoToggleTile {
-                id: perfTile
-                dialogRoot: dialogRoot
-                contentWrapper: contentWrapper
-                blurHelper: blur
-                tileKey: "performance"
-                tileName: "Performance Mode"
-                drawerCol: 0
-                drawerRow: 0
-                iconSource: "power-profile-performance"
-                activeState: dialogRoot.powerProfile === "performance"
-                onTileClicked: dialogRoot.setPerformanceMode(dialogRoot.powerProfile === "performance" ? "balanced" : "performance")
-            }
-
-            BentoToggleTile {
-                id: saverTile
-                dialogRoot: dialogRoot
-                contentWrapper: contentWrapper
-                blurHelper: blur
-                tileKey: "powersaver"
-                tileName: "Battery Saver"
-                drawerCol: 1
-                drawerRow: 0
-                iconSource: "battery-profile-powersave"
-                activeState: dialogRoot.powerProfile === "power-saver"
-                onTileClicked: dialogRoot.setPerformanceMode(dialogRoot.powerProfile === "power-saver" ? "balanced" : "power-saver")
-            }
-
-            BentoToggleTile {
-                id: micTile
-                dialogRoot: dialogRoot
-                contentWrapper: contentWrapper
-                blurHelper: blur
-                tileKey: "microphone"
-                tileName: "Microphone"
-                drawerCol: 0
-                drawerRow: 1
-                iconSource: dialogRoot.micMuted ? "microphone-sensitivity-muted" : "audio-input-microphone"
-                activeState: dialogRoot.micMuted
-                onTileClicked: dialogRoot.toggleMic()
-            }
-
-            BentoToggleTile {
-                id: muteTile
-                dialogRoot: dialogRoot
-                contentWrapper: contentWrapper
-                blurHelper: blur
-                tileKey: "muteaudio"
-                tileName: "Mute Audio"
-                drawerCol: 1
-                drawerRow: 1
-                iconSource: dialogRoot.audioMuted ? "audio-volume-muted" : "audio-volume-high"
-                activeState: dialogRoot.audioMuted
-                onTileClicked: dialogRoot.toggleAudioMute()
-            }
-
-            BentoToggleTile {
-                id: nightTile
-                dialogRoot: dialogRoot
-                contentWrapper: contentWrapper
-                blurHelper: blur
-                tileKey: "nightlight"
-                tileName: "Night Light"
-                drawerCol: 0
-                drawerRow: 2
-                iconSource: "redshift-status-on"
-                activeState: dialogRoot.nightLightStatus
-                onTileClicked: dialogRoot.toggleNightLight()
-            }
-
-            BentoToggleTile {
-                id: clipTile
-                dialogRoot: dialogRoot
-                contentWrapper: contentWrapper
-                blurHelper: blur
-                tileKey: "clipboard"
-                tileName: "Clipboard"
-                drawerCol: 1
-                drawerRow: 2
-                iconSource: "klipper"
-                activeState: false
-                onTileClicked: dialogRoot.openClipboard()
-            }
-
-            BentoToggleTile {
-                id: shotTile
-                dialogRoot: dialogRoot
-                contentWrapper: contentWrapper
-                blurHelper: blur
-                tileKey: "screenshot"
-                tileName: "Screenshot"
-                drawerCol: 0
-                drawerRow: 3
-                iconSource: "spectacle"
-                activeState: false
-                onTileClicked: dialogRoot.openScreenshot()
-            }
-
-            BentoToggleTile {
-                id: kbdTile
-                dialogRoot: dialogRoot
-                contentWrapper: contentWrapper
-                blurHelper: blur
-                tileKey: "keyboardbacklight"
-                tileName: "Keyboard Backlight"
-                drawerCol: 1
-                drawerRow: 3
-                iconSource: "input-keyboard"
-                activeState: dialogRoot.kbdLightStatus
-                onTileClicked: dialogRoot.toggleKbdBacklight()
-            }
-
-            BentoToggleTile {
-                id: airplaneTile
-                dialogRoot: dialogRoot
-                contentWrapper: contentWrapper
-                blurHelper: blur
-                tileKey: "airplanemode"
-                tileName: "Airplane Mode"
-                drawerCol: 0
-                drawerRow: 4
-                iconSource: dialogRoot.airplaneStatus ? "network-flightmode-on" : "network-flightmode-off"
-                activeState: dialogRoot.airplaneStatus
-                onTileClicked: dialogRoot.toggleAirplaneMode()
-            }
-
-            BentoToggleTile {
-                id: colorTile
-                dialogRoot: dialogRoot
-                contentWrapper: contentWrapper
-                blurHelper: blur
-                tileKey: "colorpicker"
-                tileName: "Color Picker"
-                drawerCol: 1
-                drawerRow: 4
-                iconSource: "color-picker"
-                activeState: false
-                onTileClicked: dialogRoot.openColorPicker()
             }
         }
     }

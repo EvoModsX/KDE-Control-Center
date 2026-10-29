@@ -413,7 +413,8 @@ Kirigami.ShadowedRectangle {
         id: mediaHoverArea
         anchors.fill: parent
         hoverEnabled: true
-        acceptedButtons: Qt.NoButton
+        cursorShape: Qt.PointingHandCursor
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
 
         property bool showTip: false
         Timer {
@@ -427,8 +428,15 @@ Kirigami.ShadowedRectangle {
             showTip = false
         }
 
+        onClicked: (mouse) => {
+            if (dialogRoot.editMode) return;
+            // Open the Media Sub-View on click
+            dialogRoot.activeSubView = "media"
+            if (blurHelper) blurHelper.update()
+        }
+
         ToolTip.visible: showTip && !dialogRoot.editMode
-        ToolTip.text: "Media Control"
+        ToolTip.text: "Click to open Now Playing"
     }
 
     MouseArea {

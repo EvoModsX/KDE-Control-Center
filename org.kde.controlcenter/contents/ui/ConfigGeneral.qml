@@ -22,6 +22,7 @@ Kirigami.ScrollablePage {
     property alias cfg_uiScale: scaleSlider.value
     property alias cfg_popupPosition: positionCombo.currentIndex
     property alias cfg_tileRadius: radiusSpin.value
+    property alias cfg_roundSmallTiles: roundSmallTilesCheck.checked
     property alias cfg_tileSpacing: spacingSpin.value
     property alias cfg_edgeMargin: marginSpin.value
     property alias cfg_panelHeightOffset: offsetSpin.value
@@ -160,6 +161,12 @@ Kirigami.ScrollablePage {
             Kirigami.FormData.label: i18n("Corner radius (px):")
             from: 8
             to: 36
+        }
+
+        QQC2.CheckBox {
+            id: roundSmallTilesCheck
+            Kirigami.FormData.label: i18n("Rounded small tiles:")
+            text: i18n("Force 36px radius for 1x1 and 2x1 tiles")
         }
 
         QQC2.SpinBox {

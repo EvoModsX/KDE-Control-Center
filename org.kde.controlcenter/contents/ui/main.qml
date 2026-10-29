@@ -52,6 +52,10 @@ PlasmoidItem {
     property bool kbdLightStatus: false
     property bool airplaneStatus: !root.wifiStatus && !root.btStatus
 
+    property var wifiNetworks: []
+    property var bluetoothDevices: []
+    property var audioSinks: []
+
     readonly property string batteryCapCmd: "sh -c 'cat /sys/class/power_supply/BAT*/capacity 2>/dev/null || echo 100'"
     readonly property string batteryStatCmd: "sh -c 'cat /sys/class/power_supply/BAT*/status 2>/dev/null || echo Discharging'"
     readonly property string kbdLightGetCmd: "brightnessctl --device='*kbd_backlight*' g 2>/dev/null || echo 0"
@@ -69,6 +73,71 @@ PlasmoidItem {
                 wifiSsid = parts.slice(1).join(":")
             } else if (sourceName === "bluetoothctl show") {
                 btStatus = out.includes("Powered: yes")
+            } else if (sourceName.indexOf("nmcli -t -f active,ssid,signal dev wifi") !== -1) {
+                let netMap = {}
+                let lines = out.split("\n")
+                for (let i = 0; i < lines.length; i++) {
+                    let parts = lines[i].split(":")
+                    if (parts.length >= 2 && parts[1].trim() !== "") {
+                        let ssid = parts[1].trim()
+                        let active = parts[0] === "yes"
+                        let strength = parseInt(parts[2]) || 50
+                        if (!netMap[ssid] || strength > netMap[ssid].strength) {
+                            netMap[ssid] = { ssid: ssid, active: active, strength: strength }
+                        }
+                        if (active) netMap[ssid].active = true
+                    }
+                }
+                let nets = []
+                for (let k in netMap) nets.push(netMap[k])
+                    nets.sort((a, b) => b.strength - a.strength)
+                    wifiNetworks = nets
+            } else if (sourceName.indexOf("bluetoothctl devices") !== -1) {
+                let devs = []
+                let lines = out.split("\n")
+                for (let i = 0; i < lines.length; i++) {
+                    let line = lines[i].trim()
+                    if (line.startsWith("Device")) {
+                        let parts = line.split(" ")
+                        let mac = parts[1]
+                        let name = parts.slice(2).join(" ")
+                        if (name && name !== "(public)") {
+                            let existing = bluetoothDevices.find(d => d.mac === mac)
+                            let connected = existing ? existing.connected : false
+                            devs.push({ name: name, mac: mac, connected: connected })
+                        }
+                    }
+                }
+                if (devs.length > 0) bluetoothDevices = devs
+            } else if (sourceName.indexOf("bluetoothctl info") !== -1) {
+                let macMatch = sourceName.match(/bluetoothctl info ([0-9A-F:]+)/i)
+                if (macMatch && macMatch[1]) {
+                    let mac = macMatch[1]
+                    let connected = out.includes("Connected: yes")
+                    let updated = bluetoothDevices.map(d => {
+                        if (d.mac === mac) {
+                            return { name: d.name, mac: d.mac, connected: connected }
+                        }
+                        return d
+                    })
+                    bluetoothDevices = updated
+                }
+            } else if (sourceName.indexOf("pactl list sinks") !== -1) {
+                let sinks = []
+                let blocks = out.split("Sink #")
+                let defaultSinkName = root.defaultSink ? root.defaultSink.name : ""
+                for (let i = 1; i < blocks.length; i++) {
+                    let block = blocks[i]
+                    let nameMatch = block.match(/Name:\s+([^\n]+)/)
+                    let descMatch = block.match(/Description:\s+([^\n]+)/)
+                    if (nameMatch && nameMatch[1]) {
+                        let name = nameMatch[1].trim()
+                        let description = descMatch ? descMatch[1].trim() : name
+                        let active = (name === defaultSinkName)
+                        sinks.push({ name: name, description: description, active: active })
+                    }
+                }
+                audioSinks = sinks
             } else if (sourceName.indexOf("kreadconfig6 --file plasmanotifyrc") !== -1) {
                 dndStatus = out === "true"
             } else if (sourceName === "powerprofilesctl get") {
@@ -119,10 +188,14 @@ PlasmoidItem {
     }
 
     Timer {
-        interval: 2000; running: true; repeat: true; triggeredOnStart: true
+        interval: 3000; running: true; repeat: true; triggeredOnStart: true
         onTriggered: {
             execSource.run("sh -c 'r=$(nmcli radio wifi); if [ \"$r\" = \"enabled\" ]; then s=$(nmcli -t -f active,ssid dev wifi | grep \"^yes\" | cut -d: -f2); echo \"enabled:${s}\"; else echo \"disabled:\"; fi'")
             execSource.run("bluetoothctl show")
+            execSource.run("nmcli -t -f active,ssid,signal dev wifi")
+            execSource.run("bluetoothctl devices")
+            execSource.run("sh -c 'bluetoothctl devices | while read -r type mac name; do [ -n \"$mac\" ] && bluetoothctl info \"$mac\"; done'")
+            execSource.run("pactl list sinks")
             execSource.run("sh -c 'kreadconfig6 --file plasmanotifyrc --group Notifications --key DoNotDisturb 2>/dev/null || echo false'")
             execSource.run("powerprofilesctl get")
             execSource.run("pactl get-source-mute @DEFAULT_SOURCE@")
@@ -130,9 +203,8 @@ PlasmoidItem {
             execSource.run(root.batteryCapCmd)
             execSource.run(root.batteryStatCmd)
             execSource.run("sh -c 'm=$(qdbus6 org.kde.Solid.PowerManagement /org/kde/Solid/PowerManagement/Actions/BrightnessControl org.kde.Solid.PowerManagement.Actions.BrightnessControl.brightnessMax 2>/dev/null); c=$(qdbus6 org.kde.Solid.PowerManagement /org/kde/Solid/PowerManagement/Actions/BrightnessControl org.kde.Solid.PowerManagement.Actions.BrightnessControl.brightness 2>/dev/null); if [ -n \"$m\" ] && [ -n \"$c\" ]; then echo \"bright:${c}:${m}\"; else c2=$(brightnessctl -c backlight g 2>/dev/null); m2=$(brightnessctl -c backlight m 2>/dev/null); echo \"bright:${c2}:${m2}\"; fi'")
-            execSource.run("sh -c 'b=$(qdbus6 org.kde.Solid.PowerManagement /org/kde/Solid/PowerManagement/Actions/KeyboardBrightnessControl org.kde.Solid.PowerManagement.Actions.KeyboardBrightnessControl.keyboardBrightness 2>/dev/null); if [ -n \"$b\" ]; then echo \"kbd:$b\"; else b2=$(brightnessctl -d \"*kbd*\" g 2>/dev/null); echo \"kbd:$b2\"; fi'")
+            execSource.run("sh -c 'b=$(qdbus6 org.kde.Solid.PowerManagement /org/kde/Solid/PowerManagement/Actions/KeyboardBrightnessControl org.kde.Solid.PowerManagement.Actions.KeyboardBrightnessControl.keyboardBrightness 2>/dev/null); if [ -n \"$b\" ] && [ \"$b\" != \"0\" ]; then echo \"kbd:$b\"; else b2=$(brightnessctl -d \"*kbd*\" g 2>/dev/null); echo \"kbd:$b2\"; fi'")
 
-            // Media Updates
             execSource.run("playerctl status")
             execSource.run("playerctl metadata --format '{{title}} -::- {{artist}} -::- {{mpris:artUrl}} -::- {{mpris:length}}' 2>/dev/null")
             execSource.run("playerctl position 2>/dev/null")
@@ -158,6 +230,10 @@ PlasmoidItem {
         airplaneStatus: root.airplaneStatus
         defaultSink: root.defaultSink
 
+            wifiNetworkList: root.wifiNetworks
+            bluetoothDeviceList: root.bluetoothDevices
+            audioSinks: root.audioSinks
+
             mediaTitle: root.mediaTitle
             mediaArtist: root.mediaArtist
             mediaStatus: root.mediaStatus
@@ -181,6 +257,18 @@ PlasmoidItem {
 
             onToggleWifi: { execSource.run("nmcli radio wifi " + (!root.wifiStatus ? "on" : "off")); root.wifiStatus = !root.wifiStatus }
             onToggleBluetooth: { execSource.run("bluetoothctl " + (!root.btStatus ? "power on" : "power off")); root.btStatus = !root.btStatus }
+
+            onConnectWifi: (ssid) => execSource.run("nmcli device wifi connect '" + ssid + "'")
+            onDisconnectWifi: execSource.run("nmcli device disconnect wlan0 2>/dev/null || nmcli device disconnect wifi 2>/dev/null")
+
+            onConnectBluetooth: (mac) => {
+                execSource.run("bluetoothctl connect " + mac)
+                execSource.run("bluetoothctl info " + mac)
+            }
+            onDisconnectBluetooth: (mac) => {
+                execSource.run("bluetoothctl disconnect " + mac)
+                execSource.run("bluetoothctl info " + mac)
+            }
 
             onToggleDnd: {
                 let next = !root.dndStatus
