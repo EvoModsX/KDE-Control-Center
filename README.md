@@ -7,7 +7,7 @@ A modern, highly customizable grid style Control Center plasmoid for KDE Plasma 
 ![C++](https://img.shields.io/badge/C++-BlurHelper-orange?style=flat-square)
 
 ---
-<img width="384" height="601" alt="Screenshot2" src="https://github.com/user-attachments/assets/7bba4f01-2d27-436e-bc44-dac476a52dbb" />
+<img width="406" height="630" alt="Screenshot3" src="https://github.com/user-attachments/assets/71fa64eb-a683-49df-988d-60e75408e456" />
 
 ## ✨ Features
 
@@ -20,7 +20,8 @@ A modern, highly customizable grid style Control Center plasmoid for KDE Plasma 
 - **Universal Installer**: Zero-hassle setup script that automatically checks/installs dependencies (`cmake`, `extra-cmake-modules`, compilers) across Arch/CachyOS, Fedora, Ubuntu, openSUSE, and more.
 
 ---
-<img width="367" height="513" alt="Screenshot1" src="https://github.com/user-attachments/assets/da2d3b9f-a776-44a9-bbde-8437bfb6d16b" />
+<img width="394" height="717" alt="Screenshot4" src="https://github.com/user-attachments/assets/9b1365ab-47a1-40fb-8d81-813c11aca8ba" />
+
 
 ## 🚀 Quick Installation
 
